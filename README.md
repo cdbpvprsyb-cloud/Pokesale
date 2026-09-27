@@ -1,23 +1,16 @@
-# Pokesale
+# Pokesale v4 — consolidated refined replacement
 
-Phone-first local resale radar for the Huntingtown / Prince Frederick and Beltsville areas.
+Upload **all three deployment files** (`app.py`, `render.yaml`, `requirements.txt`) to the repository root, replacing the old versions, then commit/push. Render should redeploy automatically. The Blueprint start command is `python -u app.py`; the build step compiles `app.py` first so syntax errors fail the build instead of reaching production. Health check: `/health`.
 
-## Deploy on Render
-1. Put `app.py`, `requirements.txt`, and `render.yaml` in the root of this GitHub repository.
-2. In Render, create a Blueprint and connect this repository.
-3. Render reads `render.yaml` and deploys the web service.
-4. Open the Render URL in Safari on iPhone.
-5. Share > Add to Home Screen.
+## Included
+- Mobile-first deal dashboard with product images when supplied by the market feed.
+- Retailer/location, projected resale, conservative net profit/ROI, and confidence status.
+- Best Deals, Closest Deals, New Restocks, Pokemon, Sports Cards, and Other Flips sections.
+- Home, Work, and Annapolis hunt zones.
+- Inventory-history table for state changes and future restock-pattern learning.
+- `/api/opportunities`, `/api/stores`, `/stores`, `/diagnostics`, `/scan`, and `/health`.
+- Database migration logic so an older Pokesale SQLite schema can start without manual migration.
+- Catalog observations remain explicitly unconfirmed until store-specific evidence exists.
 
-## Optional SMS
-In Render, add these environment variables:
-- TWILIO_ACCOUNT_SID
-- TWILIO_AUTH_TOKEN
-- TWILIO_FROM
-- SMS_TO
-
-Do not put Twilio secrets directly in GitHub.
-
-## Important
-The dashboard, database, opportunity math, manual item entry, PWA shell, scheduled page scanning, and SMS trigger framework are implemented.
-Retailer-specific exact local inventory adapters are still needed for reliable shelf-level restock alerts; generic page keyword matches are not equivalent to confirmed local inventory.
+## Important inventory rule
+Pokesale intentionally does **not** convert retailer catalog visibility into a claim that a local shelf has stock. The confidence field reflects evidence quality. Store-specific adapters can later raise confidence and write stock transitions to `inventory_history`.

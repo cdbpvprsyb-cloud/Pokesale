@@ -1,7 +1,1 @@
-flask==3.1.2
-requests==2.32.5
-beautifulsoup4==4.13.5
-python-dotenv==1.1.1
-twilio==9.8.0
-apscheduler==3.11.0
-gunicorn==23.0.0
+# Pokesale v4 uses Python's standard library only.

@@ -2,9 +2,12 @@ services:
   - type: web
     name: pokesale
     runtime: python
-    buildCommand: echo "Pokesale v3 - standard library only"
-    startCommand: python app.py
+    buildCommand: python -m py_compile app.py
+    startCommand: python -u app.py
     healthCheckPath: /health
+    autoDeployTrigger: commit
     envVars:
       - key: SCAN_MINUTES
         value: 15
+      - key: PYTHONUNBUFFERED
+        value: "1"
