@@ -2,7 +2,7 @@ services:
   - type: web
     name: pokesale
     runtime: python
-    buildCommand: echo "No dependencies required"
+    buildCommand: echo "Pokesale v3 - standard library only"
     startCommand: python app.py
     healthCheckPath: /health
     envVars:
