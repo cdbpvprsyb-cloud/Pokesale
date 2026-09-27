@@ -1,1 +1,1 @@
-# PokeSale v6 uses only the Python standard library.
+# PokeSale v7 Zero-Cost uses only the Python standard library.
