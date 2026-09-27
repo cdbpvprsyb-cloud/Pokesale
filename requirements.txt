@@ -1,1 +1,1 @@
-# Standard library only
+# PokeSale v6 uses only the Python standard library.
