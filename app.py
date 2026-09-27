@@ -3,11 +3,12 @@ from http.server import ThreadingHTTPServer,BaseHTTPRequestHandler
 from urllib.parse import urlparse,parse_qs,quote_plus
 from urllib.request import Request,urlopen
 from datetime import datetime,timezone,timedelta
+import xml.etree.ElementTree as ET
 
 PORT=int(os.getenv("PORT","10000"))
 DB=os.getenv("DB_PATH","/tmp/pokesale_v5.db")
 SCAN_MINUTES=max(10,int(os.getenv("SCAN_MINUTES","15")))
-UA="Mozilla/5.0 (compatible; Pokesale/5.1; personal retail monitor)"
+UA="Mozilla/5.0 (compatible; Pokesale/5.2; personal retail monitor)"
 LOCK=threading.Lock()
 
 STORES=[
@@ -46,6 +47,9 @@ def init():
  url text,image text,status text,last_seen text,first_seen text,category text default 'Pokemon',
  location text default 'Catalog / online',confidence integer default 25,stock_state text default 'observed');
  create table if not exists scans(id integer primary key,ts text,source text,found int,error text);
+ create table if not exists community_signals(
+ id integer primary key,source text,title text,url text unique,ts text,observed_at text,
+ retailer text,product text,location text,confidence integer,evidence text);
  create table if not exists inventory_history(id integer primary key,product_id text,ts text,state text,confidence integer,location text);
  create index if not exists ix_products_seen on products(last_seen);
  create index if not exists ix_hist_product on inventory_history(product_id,ts);
@@ -252,11 +256,69 @@ def opportunities(limit=500):
   else:r["profit"]=r["roi"]=None
  return rows[:limit]
 
+
+LOCAL_TERMS=("maryland"," md ","st. leonard","saint leonard","calvert","prince frederick",
+"lexington park","california md","leonardtown","waldorf","brandywine","annapolis",
+"beltsville","greenbelt","laurel","southern maryland")
+RETAILER_TERMS=("target","walmart","sam's","sams club","sam’s club","costco")
+PRODUCT_TERMS=("pokemon","pokémon","elite trainer"," etb","booster","trading card","tcg")
+COMMUNITY_FEEDS=[
+ ("Reddit PokemonRestocks","https://www.reddit.com/r/PokemonRestocks/new/.rss"),
+ ("Reddit PokemonDeals","https://www.reddit.com/r/PokemonDeals/new/.rss"),
+ ("Google indexed reports","https://news.google.com/rss/search?q="+quote_plus('Pokemon restock Target Walmart Sams Club Costco Maryland'))
+]
+def parse_feed(raw):
+ root=ET.fromstring(raw);rows=[]
+ for x in root.findall(".//item"):
+  rows.append(((x.findtext("title") or "").strip(),(x.findtext("link") or "").strip(),
+               (x.findtext("description") or "").strip(),(x.findtext("pubDate") or "").strip()))
+ ns={"a":"http://www.w3.org/2005/Atom"}
+ for x in root.findall(".//a:entry",ns):
+  l=x.find("a:link",ns)
+  rows.append(((x.findtext("a:title",default="",namespaces=ns) or "").strip(),
+               l.get("href","") if l is not None else "",
+               x.findtext("a:content",default="",namespaces=ns) or "",
+               x.findtext("a:updated",default="",namespaces=ns) or ""))
+ return rows
+def signal_score(text):
+ t=" "+text.lower()+" ";score=8
+ if any(x in t for x in PRODUCT_TERMS):score+=15
+ if any(x in t for x in RETAILER_TERMS):score+=15
+ if any(x in t for x in LOCAL_TERMS):score+=30
+ if any(x in t for x in ("restock","restocked","in stock","stocked","shelf","found","pickup")):score+=15
+ if any(x in t for x in ("photo","image","pic","picture")):score+=5
+ return min(85,score)
+def scan_community():
+ for source,url in COMMUNITY_FEEDS:
+  found=0
+  try:
+   for title,link,desc,published in parse_feed(fetch(url)):
+    clean=re.sub(r"<[^>]+>"," ",html.unescape(title+" "+desc));low=" "+clean.lower()+" "
+    if not any(x in low for x in PRODUCT_TERMS):continue
+    retailer=next((x.title() for x in RETAILER_TERMS if x in low),"Unknown")
+    location=next((x.strip().title() for x in LOCAL_TERMS if x in low),"Regional / unspecified")
+    product="ETB" if ("elite trainer" in low or " etb" in low) else "Pokemon sealed/cards"
+    with db() as c:
+     c.execute("""insert into community_signals(source,title,url,ts,observed_at,retailer,product,location,confidence,evidence)
+      values(?,?,?,?,?,?,?,?,?,?) on conflict(url) do update set observed_at=excluded.observed_at,
+      confidence=max(community_signals.confidence,excluded.confidence)""",
+      (source,title[:500],link,published or datetime.now(timezone.utc).isoformat(),
+       datetime.now(timezone.utc).isoformat(),retailer,product,location,signal_score(clean),
+       "COMMUNITY REPORT — UNVERIFIED"))
+    found+=1
+   log(source,found,"OK" if found else "Feed fetched; no relevant reports.")
+  except Exception as ex:log(source,0,type(ex).__name__+": "+str(ex))
+def community_latest(limit=60):
+ c=db();rows=c.execute("""select source,title,url,observed_at,retailer,product,location,confidence,evidence
+ from community_signals order by id desc limit ?""",(limit,)).fetchall();c.close()
+ return [dict(x) for x in rows]
+
 def scan_all():
  if not LOCK.acquire(False):return
  try:
   scan_retailers()
   scan_market()
+  scan_community()
  finally:LOCK.release()
 def worker():
  time.sleep(3)
@@ -285,7 +347,7 @@ def home():
  etbs=sorted([r for r in rows if kind(r["name"])=="etb"],key=lambda r:(r.get("profit") is not None,r.get("profit") or -999),reverse=True)[:12]
  retail=[r for r in rows if r.get("retail_price") is not None][:10]
  c=db();n=c.execute("select count(*) from products").fetchone()[0];hist=c.execute("select count(*) from inventory_history").fetchone()[0];c.close()
- return f"""<!doctype html><meta name=viewport content="width=device-width,initial-scale=1"><title>Pokesale v5</title><style>{CSS}</style><div class=w><div class=top><div><div class=brand>⚡ Pokesale v5.1</div><div class=mut>ETB-first retail-to-resale radar</div></div><a class=btn href=/scan>Scan now</a></div><div class=nav><a href=#deals>Best Deals</a><a href=#etb>ETBs</a><a href=#retail>Retail sightings</a><a href=/stores>Stores</a><a href=/diagnostics>Diagnostics</a></div><div class=hero><b>Evidence-first</b><div class=mut>Retail catalog sightings are never labeled local stock. Store-specific confirmation requires store-specific evidence.</div><div class=stats><div class=stat><div class=num>{n}</div><div class=mut>tracked</div></div><div class=stat><div class=num>{len(deals)}</div><div class=mut>positive deals</div></div><div class=stat><div class=num>{hist}</div><div class=mut>events</div></div></div></div><div id=deals>{section("🔥 Best Deals",deals)}</div><div id=etb>{section("⚡ Elite Trainer Boxes",etbs)}</div><div id=retail>{section("🛒 Retail Price Sightings",retail)}</div></div>"""
+ return f"""<!doctype html><meta name=viewport content="width=device-width,initial-scale=1"><title>Pokesale v5</title><style>{CSS}</style><div class=w><div class=top><div><div class=brand>⚡ Pokesale v5.2</div><div class=mut>ETB-first retail-to-resale radar</div></div><a class=btn href=/scan>Scan now</a></div><div class=nav><a href=#deals>Best Deals</a><a href=#etb>ETBs</a><a href=#retail>Retail sightings</a><a href=/stores>Stores</a><a href=/diagnostics>Diagnostics</a><a href=/community>Community</a></div><div class=hero><b>Evidence-first</b><div class=mut>Retail catalog sightings are never labeled local stock. Store-specific confirmation requires store-specific evidence.</div><div class=stats><div class=stat><div class=num>{n}</div><div class=mut>tracked</div></div><div class=stat><div class=num>{len(deals)}</div><div class=mut>positive deals</div></div><div class=stat><div class=num>{hist}</div><div class=mut>events</div></div></div></div><div id=deals>{section("🔥 Best Deals",deals)}</div><div id=etb>{section("⚡ Elite Trainer Boxes",etbs)}</div><div id=retail>{section("🛒 Retail Price Sightings",retail)}</div></div>"""
 
 def diagnostics():
  c=db();ss=c.execute("select * from scans order by id desc limit 60").fetchall();c.close()
@@ -304,12 +366,17 @@ class H(BaseHTTPRequestHandler):
   p=urlparse(self.path).path
   if p=="/":return self.out(home())
   if p=="/stores":return self.out(stores())
+  if p=="/community":
+   rows=community_latest()
+   cards="".join(f"<div class=store><b>{esc(x['title'])}</b><div class=mut>{esc(x['source'])} · {esc(x['retailer'])} · {esc(x['location'])}<br>{x['confidence']}% signal · {esc(x['evidence'])}</div><p><a class=btn href='{esc(x['url'])}' target=_blank>Open report</a></p></div>" for x in rows)
+   return self.out(f"<meta name=viewport content='width=device-width'><style>{CSS}</style><div class=w><h1>Community Restock Signals</h1><p class=mut>Public reports are supporting evidence only — never confirmed inventory.</p><a class=btn href=/>Back</a><a class=btn href=/scan>Scan now</a>{cards or '<div class=empty>No community signals yet.</div>'}</div>")
   if p=="/diagnostics":return self.out(diagnostics())
   if p=="/scan":threading.Thread(target=scan_all,daemon=True).start();self.send_response(303);self.send_header("Location","/");self.end_headers();return
   if p=="/health":
-   c=db();n=c.execute("select count(*) from products").fetchone()[0];c.close();return self.out(json.dumps({"ok":True,"products":n,"version":"5.1"}),"application/json")
+   c=db();n=c.execute("select count(*) from products").fetchone()[0];c.close();return self.out(json.dumps({"ok":True,"products":n,"version":"5.2"}),"application/json")
   if p=="/api/opportunities":return self.out(json.dumps(opportunities(),separators=(",",":")),"application/json")
   if p=="/api/stores":return self.out(json.dumps([{"zone":z,"retailer":r,"city":n,"address":a} for z,r,n,a in STORES]),"application/json")
+  if p=="/api/community":return self.out(json.dumps(community_latest(),separators=(",",":")),"application/json")
   return self.out("Not found","text/plain",404)
  def log_message(self,*a):pass
 
