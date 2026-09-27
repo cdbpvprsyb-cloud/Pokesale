@@ -1,16 +1,15 @@
-# Pokesale v4 — consolidated refined replacement
+# Pokesale v5
 
-Upload **all three deployment files** (`app.py`, `render.yaml`, `requirements.txt`) to the repository root, replacing the old versions, then commit/push. Render should redeploy automatically. The Blueprint start command is `python -u app.py`; the build step compiles `app.py` first so syntax errors fail the build instead of reaching production. Health check: `/health`.
+Commit `app.py` and `render.yaml` to the repository root. No third-party Python packages are required.
 
-## Included
-- Mobile-first deal dashboard with product images when supplied by the market feed.
-- Retailer/location, projected resale, conservative net profit/ROI, and confidence status.
-- Best Deals, Closest Deals, New Restocks, Pokemon, Sports Cards, and Other Flips sections.
-- Home, Work, and Annapolis hunt zones.
-- Inventory-history table for state changes and future restock-pattern learning.
-- `/api/opportunities`, `/api/stores`, `/stores`, `/diagnostics`, `/scan`, and `/health`.
-- Database migration logic so an older Pokesale SQLite schema can start without manual migration.
-- Catalog observations remain explicitly unconfirmed until store-specific evidence exists.
+## What changed
+- ETB-first product matching (`Elite Trainer Box` and `ETB` normalize to the same product type).
+- Retail collectors for Target, Walmart, GameStop, Five Below and Dollar General.
+- Structured JSON/JSON-LD extraction before conservative visible-HTML fallback.
+- Retail price sightings remain explicitly **catalog/online** unless store-specific evidence exists.
+- TCGCSV/TCGplayer market matching, projected resale, profit and ROI.
+- Per-source diagnostics so blocked/client-rendered retailers are visible instead of silently producing fake inventory.
+- Existing HOME / WORK / ANNAPOLIS hunt zones retained.
 
-## Important inventory rule
-Pokesale intentionally does **not** convert retailer catalog visibility into a claim that a local shelf has stock. The confidence field reflects evidence quality. Store-specific adapters can later raise confidence and write stock transitions to `inventory_history`.
+## Important
+Retailer websites can block cloud datacenter requests or change page structures. v5 reports those failures in `/diagnostics`; it does not fabricate local inventory. Catalog price is not local stock.

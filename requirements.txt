@@ -1,1 +1,1 @@
-# Pokesale v4 uses Python's standard library only.
+# Standard library only
