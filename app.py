@@ -7,7 +7,7 @@ from datetime import datetime,timezone,timedelta
 PORT=int(os.getenv("PORT","10000"))
 DB=os.getenv("DB_PATH","/tmp/pokesale_v5.db")
 SCAN_MINUTES=max(10,int(os.getenv("SCAN_MINUTES","15")))
-UA="Mozilla/5.0 (compatible; Pokesale/5.0; personal retail monitor)"
+UA="Mozilla/5.0 (compatible; Pokesale/5.1; personal retail monitor)"
 LOCK=threading.Lock()
 
 STORES=[
@@ -28,11 +28,11 @@ STORES=[
 ]
 
 FEEDS=[
- ("Target","https://www.target.com/c/trading-cards-toys-games/pokemon/-/N-27p31Z569t0"),
- ("Walmart","https://www.walmart.com/browse/collectibles/pokemon-cards/5967908_9807313_2611231"),
- ("GameStop","https://www.gamestop.com/toys-games/trading-cards/pokemon"),
- ("Five Below","https://www.fivebelow.com/categories/toys-and-games/trading-cards"),
- ("Dollar General","https://www.dollargeneral.com/c/toys/trading-cards")
+ ("Target","https://www.target.com/s/elite%2Btrainer"),
+ ("Walmart","https://www.walmart.com/browse/collectibles/pokemon-trainer-box/5967908_9807313_4252400_9331354"),
+ ("GameStop","https://www.gamestop.com/search/?q=pokemon%20elite%20trainer%20box"),
+ ("Five Below","https://www.fivebelow.com/categories/toys-and-games/blind-bags-and-collectibles/trading-cards"),
+ ("Dollar General","https://www.dollargeneral.com/search?q=pokemon")
 ]
 
 def db():
@@ -128,6 +128,7 @@ def json_candidates(raw):
 
 def parse_retailer(raw,base):
  out={}
+ # Stage 1: structured JSON/JSON-LD.
  for root in json_candidates(raw):
   for d in walk(root):
    name=d.get("name") or d.get("title") or d.get("productName")
@@ -143,23 +144,40 @@ def parse_retailer(raw,base):
    if isinstance(url,str) and url.startswith("/"):url=base.rstrip("/")+url
    key=re.sub(r"\W+"," ",name.lower()).strip()
    out[key]=(name,price,url if isinstance(url,str) else "",image if isinstance(image,str) else "")
- # Conservative visible-HTML fallback. Never interprets this as local stock.
- text=html.unescape(re.sub(r"<[^>]+>"," ",raw))
- for m in re.finditer(r'((?:Pok[eé]mon).{0,150}?(?:Elite Trainer Box|ETB|Booster (?:Bundle|Box|Pack)|Collection|Tin)).{0,100}?\$([0-9]{1,3}(?:\.[0-9]{2})?)',text,re.I):
-  name=" ".join(m.group(1).split()); p=money(m.group(2))
-  if p:out.setdefault(re.sub(r"\W+"," ",name.lower()).strip(),(name,p,"",""))
+ # Stage 2: visible text. Retail pages often put price BEFORE the title, so inspect both sides.
+ visible=html.unescape(re.sub(r"<script[^>]*>[\s\S]*?</script>"," ",raw,flags=re.I))
+ visible=re.sub(r"<style[^>]*>[\s\S]*?</style>"," ",visible,flags=re.I)
+ visible=re.sub(r"<[^>]+>","\n",visible)
+ lines=[" ".join(x.split()) for x in visible.splitlines() if x.strip()]
+ for i,line in enumerate(lines):
+  pm=re.fullmatch(r"(?:Now\s*)?\$?\s*([0-9]{1,4}(?:\.[0-9]{2})?)",line,re.I)
+  if not pm:continue
+  price=money(pm.group(1))
+  if price is None:continue
+  neighborhood=lines[max(0,i-10):i]+lines[i+1:i+14]
+  for candidate in neighborhood:
+   if 12<len(candidate)<260 and productish(candidate):
+    key=re.sub(r"\W+"," ",candidate.lower()).strip()
+    out.setdefault(key,(candidate,price,"",""))
+    break
  return list(out.values())[:250]
 
 def scan_retailers():
  for retailer,url in FEEDS:
   try:
-   rows=parse_retailer(fetch(url),url.split("/",3)[0]+"//"+url.split("/",3)[2])
+   raw=fetch(url)
+   rows=parse_retailer(raw,url.split("/",3)[0]+"//"+url.split("/",3)[2])
    for name,price,purl,img in rows:
     link=purl or url
     upsert("retailer:"+retailer,retailer,name,price,None,link,img,
            "RETAILER CATALOG + PRICE — LOCAL STOCK NOT CONFIRMED","Catalog / online","catalog")
-   log(retailer,len(rows),"OK" if rows else "Page fetched, but no parseable Pokemon sealed products/prices were exposed.")
-  except Exception as ex:log(retailer,0,type(ex).__name__+": "+str(ex))
+   note="OK" if rows else "FETCH OK / PARSER 0 — retailer HTML did not expose usable sealed-product name+price pairs."
+   log(retailer,len(rows),note)
+  except Exception as ex:
+   msg=type(ex).__name__+": "+str(ex)
+   if "403" in msg:msg+=" — BLOCKED FROM RENDER; not treated as inventory failure."
+   if "404" in msg:msg+=" — RETAILER URL INVALID/CHANGED."
+   log(retailer,0,msg)
 
 def sealed_name(name):
  n=name.lower()
@@ -267,7 +285,7 @@ def home():
  etbs=sorted([r for r in rows if kind(r["name"])=="etb"],key=lambda r:(r.get("profit") is not None,r.get("profit") or -999),reverse=True)[:12]
  retail=[r for r in rows if r.get("retail_price") is not None][:10]
  c=db();n=c.execute("select count(*) from products").fetchone()[0];hist=c.execute("select count(*) from inventory_history").fetchone()[0];c.close()
- return f"""<!doctype html><meta name=viewport content="width=device-width,initial-scale=1"><title>Pokesale v5</title><style>{CSS}</style><div class=w><div class=top><div><div class=brand>⚡ Pokesale v5</div><div class=mut>ETB-first retail-to-resale radar</div></div><a class=btn href=/scan>Scan now</a></div><div class=nav><a href=#deals>Best Deals</a><a href=#etb>ETBs</a><a href=#retail>Retail sightings</a><a href=/stores>Stores</a><a href=/diagnostics>Diagnostics</a></div><div class=hero><b>Evidence-first</b><div class=mut>Retail catalog sightings are never labeled local stock. Store-specific confirmation requires store-specific evidence.</div><div class=stats><div class=stat><div class=num>{n}</div><div class=mut>tracked</div></div><div class=stat><div class=num>{len(deals)}</div><div class=mut>positive deals</div></div><div class=stat><div class=num>{hist}</div><div class=mut>events</div></div></div></div><div id=deals>{section("🔥 Best Deals",deals)}</div><div id=etb>{section("⚡ Elite Trainer Boxes",etbs)}</div><div id=retail>{section("🛒 Retail Price Sightings",retail)}</div></div>"""
+ return f"""<!doctype html><meta name=viewport content="width=device-width,initial-scale=1"><title>Pokesale v5</title><style>{CSS}</style><div class=w><div class=top><div><div class=brand>⚡ Pokesale v5.1</div><div class=mut>ETB-first retail-to-resale radar</div></div><a class=btn href=/scan>Scan now</a></div><div class=nav><a href=#deals>Best Deals</a><a href=#etb>ETBs</a><a href=#retail>Retail sightings</a><a href=/stores>Stores</a><a href=/diagnostics>Diagnostics</a></div><div class=hero><b>Evidence-first</b><div class=mut>Retail catalog sightings are never labeled local stock. Store-specific confirmation requires store-specific evidence.</div><div class=stats><div class=stat><div class=num>{n}</div><div class=mut>tracked</div></div><div class=stat><div class=num>{len(deals)}</div><div class=mut>positive deals</div></div><div class=stat><div class=num>{hist}</div><div class=mut>events</div></div></div></div><div id=deals>{section("🔥 Best Deals",deals)}</div><div id=etb>{section("⚡ Elite Trainer Boxes",etbs)}</div><div id=retail>{section("🛒 Retail Price Sightings",retail)}</div></div>"""
 
 def diagnostics():
  c=db();ss=c.execute("select * from scans order by id desc limit 60").fetchall();c.close()
@@ -289,7 +307,7 @@ class H(BaseHTTPRequestHandler):
   if p=="/diagnostics":return self.out(diagnostics())
   if p=="/scan":threading.Thread(target=scan_all,daemon=True).start();self.send_response(303);self.send_header("Location","/");self.end_headers();return
   if p=="/health":
-   c=db();n=c.execute("select count(*) from products").fetchone()[0];c.close();return self.out(json.dumps({"ok":True,"products":n,"version":"5.0"}),"application/json")
+   c=db();n=c.execute("select count(*) from products").fetchone()[0];c.close();return self.out(json.dumps({"ok":True,"products":n,"version":"5.1"}),"application/json")
   if p=="/api/opportunities":return self.out(json.dumps(opportunities(),separators=(",",":")),"application/json")
   if p=="/api/stores":return self.out(json.dumps([{"zone":z,"retailer":r,"city":n,"address":a} for z,r,n,a in STORES]),"application/json")
   return self.out("Not found","text/plain",404)

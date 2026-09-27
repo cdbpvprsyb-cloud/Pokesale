@@ -1,15 +1,13 @@
-# Pokesale v5
+# Pokesale v5.1 hotfix
 
-Commit `app.py` and `render.yaml` to the repository root. No third-party Python packages are required.
+This hotfix addresses the failures visible in production diagnostics.
 
-## What changed
-- ETB-first product matching (`Elite Trainer Box` and `ETB` normalize to the same product type).
-- Retail collectors for Target, Walmart, GameStop, Five Below and Dollar General.
-- Structured JSON/JSON-LD extraction before conservative visible-HTML fallback.
-- Retail price sightings remain explicitly **catalog/online** unless store-specific evidence exists.
-- TCGCSV/TCGplayer market matching, projected resale, profit and ROI.
-- Per-source diagnostics so blocked/client-rendered retailers are visible instead of silently producing fake inventory.
-- Existing HOME / WORK / ANNAPOLIS hunt zones retained.
+- Dollar General: replaces the dead 404 category URL with retailer search.
+- Five Below: replaces the obsolete category path with the current trading-card path.
+- Walmart: uses the dedicated Pokemon Trainer Box browse page.
+- Target: uses an ETB-focused search page.
+- Retail parser: supports price-before-title and title-before-price page layouts.
+- Diagnostics: explicitly distinguishes Render 403 blocking from parser-zero and 404 URL failures.
+- Safety: catalog observations remain catalog-only; no local inventory is inferred.
 
-## Important
-Retailer websites can block cloud datacenter requests or change page structures. v5 reports those failures in `/diagnostics`; it does not fabricate local inventory. Catalog price is not local stock.
+Known limitation: GameStop/Five Below may still return 403 to Render. This patch reports that accurately rather than attempting to bypass retailer access controls. Store-specific inventory requires a legitimate store-specific retailer response/source.
