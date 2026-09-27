@@ -2,21 +2,9 @@ services:
   - type: web
     name: pokesale
     runtime: python
-    buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 4 --timeout 60
+    buildCommand: echo "No dependencies required"
+    startCommand: python app.py
     healthCheckPath: /health
     envVars:
-      - key: PYTHON_VERSION
-        value: 3.12.7
-      - key: FLASK_SECRET
-        generateValue: true
       - key: SCAN_MINUTES
-        value: 10
-      - key: MIN_PROFIT
-        value: 10
-      - key: MIN_ROI
-        value: 25
-      - key: SMS_MIN_PROFIT
-        value: 25
-      - key: SMS_MIN_ROI
-        value: 40
+        value: 15
